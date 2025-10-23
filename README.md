@@ -1,4 +1,3 @@
-
 # Nova - Next.js Project
 
 <!-- Badges -->
@@ -81,4 +80,3 @@ You can also deploy to other platforms like Netlify, AWS, or a custom server. Re
   **Solution**: Ensure all dependencies are installed (`npm install` or `yarn install`).
 - **Issue**: Database connection error.
   **Solution**: Verify your database URL and credentials in the `.env.local` file.
-
