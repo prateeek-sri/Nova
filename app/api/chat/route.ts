@@ -32,7 +32,7 @@ const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN);
 const db = client.db(ASTRA_DB_API_ENDPOINT!, { keyspace: ASTRA_DB_NAMESPACE });
 
 // Helper function: fetch document context
-export async function getDocumentContext(latestMessage: string) {
+async function getDocumentContext(latestMessage: string) {
   try {
     const embeddingResponse = await genAI.models.embedContent({
       model: "gemini-embedding-001",
