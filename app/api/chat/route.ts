@@ -133,12 +133,20 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
       `,
     };
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContentStream(template.content);
+    const generateParams = {
+      model: "gemini-1.5-flash",
+      contents: [{ role: "user", parts: [{ text: template.content }] }],
+      config: {
+        maxOutputTokens: 200,
+        temperature: 0.7,
+      },
+    };
+
+    const responseStream = await genAI.models.generateContentStream(generateParams);
 
     let responseText = "";
-    for await (const chunk of result.stream) {
-      responseText += chunk.text();
+    for await (const chunk of responseStream) {
+      responseText += chunk.text() || chunk.text || chunk;
     }
 
     return new Response(responseText, { status: 200 });
