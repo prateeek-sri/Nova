@@ -146,7 +146,7 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
 
     let responseText = "";
     for await (const chunk of responseStream) {
-      responseText += chunk.text() || chunk.text || chunk;
+      responseText += chunk.text || chunk;
     }
 
     return new Response(responseText, { status: 200 });
