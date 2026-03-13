@@ -108,7 +108,7 @@ export async function POST(req: Request) {
     // 3. Fetch document context
     const docContext = await getDocumentContext(latestMessage);
 
-    // 4. AIS Generation
+    // 4. AI Generation with Fallback
     if (!genAI) {
       return new Response("AI Model not configured. Check GEMINI_API_KEY.", { status: 500 });
     }
@@ -133,23 +133,40 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
       `,
     };
 
-    const generateParams = {
-      model: "gemini-1.5-flash",
-      contents: [{ role: "user", parts: [{ text: template.content }] }],
-      config: {
-        maxOutputTokens: 200,
-        temperature: 0.7,
-      },
+    const generateWithFallback = async (modelName: string) => {
+      const params = {
+        model: modelName,
+        contents: [{ role: "user", parts: [{ text: template.content }] }],
+        config: {
+          maxOutputTokens: 250,
+          temperature: 0.7,
+        },
+      };
+      return await genAI.models.generateContentStream(params);
     };
 
-    const responseStream = await genAI.models.generateContentStream(generateParams);
+    let responseStream;
+    try {
+      // Try primary model
+      responseStream = await generateWithFallback("gemini-1.5-flash");
+    } catch (err: any) {
+      console.warn(`Primary model failed, trying fallback: ${err.message}`);
+      try {
+        // Try stable versioned model
+        responseStream = await generateWithFallback("gemini-1.5-flash-002");
+      } catch (err2: any) {
+        console.warn(`Secondary model failed, trying pro: ${err2.message}`);
+        // Final fallback to Pro
+        responseStream = await generateWithFallback("gemini-1.5-pro");
+      }
+    }
 
     let responseText = "";
     for await (const chunk of responseStream) {
-      responseText += chunk.text || chunk;
+      responseText += chunk.text || (chunk as any).text?.() || "";
     }
 
-    return new Response(responseText, { status: 200 });
+    return new Response(responseText || "Sorry, I couldn't generate a response.", { status: 200 });
   } catch (error) {
     console.error("Detailed POST Error:", error);
     return new Response(
