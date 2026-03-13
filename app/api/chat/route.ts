@@ -133,31 +133,34 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
       `,
     };
 
+    // 4. AI Generation with Fallback (Reverted to gemini-2.5-flash as requested)
+    if (!genAI) {
+      return new Response("AI Model not configured. Check GEMINI_API_KEY.", { status: 500 });
+    }
+
     const generateWithFallback = async (modelName: string) => {
-      const params = {
+      return await genAI.models.generateContentStream({
         model: modelName,
         contents: [{ role: "user", parts: [{ text: template.content }] }],
         config: {
-          maxOutputTokens: 250,
+          maxOutputTokens: 300,
           temperature: 0.7,
         },
-      };
-      return await genAI.models.generateContentStream(params);
+      });
     };
 
     let responseStream;
     try {
-      // Try primary model
-      responseStream = await generateWithFallback("gemini-1.5-flash");
+      // Try the one that worked before
+      responseStream = await generateWithFallback("gemini-2.5-flash");
     } catch (err: any) {
-      console.warn(`Primary model failed, trying fallback: ${err.message}`);
+      console.warn(`2.5-flash failed: ${err.message}`);
       try {
-        // Try stable versioned model
-        responseStream = await generateWithFallback("gemini-1.5-flash-002");
+        // Try stable 2.0
+        responseStream = await generateWithFallback("gemini-2.0-flash");
       } catch (err2: any) {
-        console.warn(`Secondary model failed, trying pro: ${err2.message}`);
-        // Final fallback to Pro
-        responseStream = await generateWithFallback("gemini-1.5-pro");
+        // Final fallback
+        responseStream = await generateWithFallback("gemini-1.5-flash");
       }
     }
 
