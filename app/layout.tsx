@@ -4,8 +4,8 @@ import Navbar from './components/Navbar'
 import './globals.css'
 import Footer from './components/Footer'
 export const metadata: Metadata = {
-  title: 'Nova - AI Assistant',
-  description: 'Your personal AI assistant powered by Gemini and AstraDB.',
+  title: 'Nova — Big 3 Anime AI',
+  description: 'Your AI-powered companion for One Piece, Naruto, and Bleach. Ask anything about the Big 3.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

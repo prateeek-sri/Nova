@@ -37,7 +37,7 @@ async function getDocumentContext(latestMessage: string) {
     const embeddingResponse = await genAI.models.embedContent({
       model: "gemini-embedding-001",
       contents: latestMessage,
-      config: { outputDimensionality: 1024 },
+
     });
 
     const embedding = embeddingResponse.embeddings[0]?.values;
@@ -46,7 +46,7 @@ async function getDocumentContext(latestMessage: string) {
     const collection = db.collection(ASTRA_DB_COLLECTION);
     const cursor = collection.find(null, {
       sort: { $vector: embedding },
-      limit: 10,
+      limit: 5,
     });
 
     const documents = await cursor.toArray();
@@ -76,15 +76,17 @@ export async function POST(req: Request) {
       return new Response("Too many requests — max 4 per minute.", { status: 429 });
     }
 
-    // Fetch document context
+    // Fetch document context from AstraDB
     const docContext = await getDocumentContext(latestMessage);
 
     const template = {
       role: "system",
       content: `
-        You are an AI assistant specialized in Indian Government Schemes, Policies, and Welfare Programs.
-Use the context below to answer questions accurately. Also, if you don't have any context, answer based on your own knowledge.
-And don't mention about context provided or not.
+You are an expert AI assistant specialized in the Big 3 anime: One Piece, Naruto, and Bleach.
+You have deep knowledge of all characters, story arcs, abilities, power systems, lore, and world-building.
+Use the context below to answer questions accurately. If the context doesn't cover the topic, answer based on your own knowledge.
+Be enthusiastic, engaging, and reference specific moments when relevant. Don't mention about context provided or not.
+If someone asks about something outside anime, politely redirect them to ask about One Piece, Naruto, or Bleach.
 
         -------------------
         START CONTEXT
