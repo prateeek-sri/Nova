@@ -13,31 +13,40 @@ const {
   UPSTASH_REDIS_REST_TOKEN,
 } = process.env;
 
-const redis = new Redis({
-  url: UPSTASH_REDIS_REST_URL!,
-  token: UPSTASH_REDIS_REST_TOKEN!,
-});
+// Initialize Upstash Redis (safe for build time)
+const redis = UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN
+  ? new Redis({
+      url: UPSTASH_REDIS_REST_URL,
+      token: UPSTASH_REDIS_REST_TOKEN,
+    })
+  : null;
 
-// Rate limiter: 4 requests per minute per IP
-const rateLimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.fixedWindow(4, "60 s"),
-});
+// Initialize Rate Limiter
+const rateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(4, "60 s"),
+    })
+  : null;
 
 // Initialize the GoogleGenAI API
-const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 // Initialize the Astra DB client
-const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN);
-const db = client.db(ASTRA_DB_API_ENDPOINT!, { keyspace: ASTRA_DB_NAMESPACE });
+const client = ASTRA_DB_APPLICATION_TOKEN ? new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN) : null;
+const db = client && ASTRA_DB_API_ENDPOINT ? client.db(ASTRA_DB_API_ENDPOINT, { keyspace: ASTRA_DB_NAMESPACE }) : null;
 
 // Helper function: fetch document context
 async function getDocumentContext(latestMessage: string) {
   try {
+    if (!genAI || !db || !ASTRA_DB_COLLECTION) {
+      console.warn("Context fetch skipped: Missing GenAI or DB configuration.");
+      return [];
+    }
+
     const embeddingResponse = await genAI.models.embedContent({
       model: "gemini-embedding-001",
       contents: latestMessage,
-
     });
 
     const embedding = embeddingResponse.embeddings[0]?.values;
@@ -57,10 +66,23 @@ async function getDocumentContext(latestMessage: string) {
   }
 }
 
-// POST handler with Upstash Redis rate limiting
+// POST handler with resilience
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    // 1. Validate Environment Variables
+    const missingVars = [];
+    if (!ASTRA_DB_API_ENDPOINT) missingVars.push("ASTRA_DB_API_ENDPOINT");
+    if (!ASTRA_DB_APPLICATION_TOKEN) missingVars.push("ASTRA_DB_APPLICATION_TOKEN");
+    if (!GEMINI_API_KEY) missingVars.push("GEMINI_API_KEY");
+    if (!UPSTASH_REDIS_REST_URL) missingVars.push("UPSTASH_REDIS_REST_URL");
+    if (!UPSTASH_REDIS_REST_TOKEN) missingVars.push("UPSTASH_REDIS_REST_TOKEN");
+
+    if (missingVars.length > 0) {
+      console.error("CRITICAL: Missing Environment Variables:", missingVars.join(", "));
+    }
+
+    const body = await req.json();
+    const { messages } = body;
     const latestMessage =
       messages?.[messages.length - 1]?.text || messages?.[messages.length - 1]?.content;
 
@@ -68,16 +90,28 @@ export async function POST(req: Request) {
       return new Response("Please provide a valid question.", { status: 400 });
     }
 
-    // Get client IP for rate limiting
-    const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
-    const { success } = await rateLimit.limit(ip);
-
-    if (!success) {
-      return new Response("Too many requests — max 4 per minute.", { status: 429 });
+    // 2. Rate Limiting (Fail-safe)
+    if (rateLimit) {
+      try {
+        const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
+        const { success } = await rateLimit.limit(ip);
+        if (!success) {
+          return new Response("Too many requests — max 4 per minute.", { status: 429 });
+        }
+      } catch (rlError) {
+        console.error("Rate Limiter Error (falling back to allow):", rlError);
+      }
+    } else {
+      console.warn("Rate Limiter disabled: Missing Upstash Configuration.");
     }
 
-    // Fetch document context from AstraDB
+    // 3. Fetch document context
     const docContext = await getDocumentContext(latestMessage);
+
+    // 4. AIS Generation
+    if (!genAI) {
+      return new Response("AI Model not configured. Check GEMINI_API_KEY.", { status: 500 });
+    }
 
     const template = {
       role: "system",
@@ -86,37 +120,33 @@ You are an expert AI assistant specialized in the Big 3 anime: One Piece, Naruto
 You have deep knowledge of all characters, story arcs, abilities, power systems, lore, and world-building.
 Use the context below to answer questions accurately. If the context doesn't cover the topic, answer based on your own knowledge.
 Be enthusiastic, engaging, and reference specific moments when relevant. Don't mention about context provided or not.
-If someone asks about something outside anime, politely redirect them to ask about One Piece, Naruto, or Bleach.
 
         -------------------
         START CONTEXT
         ${JSON.stringify(docContext)}
         END CONTEXT
 
-        CURRENT TIME: ${Date.now()}
+        CURRENT TIME: ${new Date().toLocaleString()}
         ---------------------
         QUESTION: ${latestMessage}
         -----------------------
       `,
     };
 
-    const generateParams = {
-      model: "gemini-2.5-flash",
-      contents: [template.content],
-      maxTokens: 150,
-      temperature: 0.7,
-    };
-
-    const responseStream = await genAI.models.generateContentStream(generateParams);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const result = await model.generateContentStream(template.content);
 
     let responseText = "";
-    for await (const chunk of responseStream) {
-      responseText += chunk.text || chunk;
+    for await (const chunk of result.stream) {
+      responseText += chunk.text();
     }
 
     return new Response(responseText, { status: 200 });
   } catch (error) {
-    console.error("Error in POST request:", error);
-    return new Response("Error generating info", { status: 500 });
+    console.error("Detailed POST Error:", error);
+    return new Response(
+      `Error generating info: ${error instanceof Error ? error.message : "Internal Server Error"}`,
+      { status: 500 }
+    );
   }
 }
