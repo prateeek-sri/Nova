@@ -134,16 +134,13 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
     };
 
     // 4. AI Generation with Fallback (Reverted to gemini-2.5-flash as requested)
-    if (!genAI) {
-      return new Response("AI Model not configured. Check GEMINI_API_KEY.", { status: 500 });
-    }
-
     const generateWithFallback = async (modelName: string) => {
+      // Use generationConfig instead of config for REST-style calls
       return await genAI.models.generateContentStream({
-        model: modelName,
+        model: `models/${modelName}`, // Ensure 'models/' prefix for REST calls
         contents: [{ role: "user", parts: [{ text: template.content }] }],
-        config: {
-          maxOutputTokens: 300,
+        generationConfig: {
+          maxOutputTokens: 1000,
           temperature: 0.7,
         },
       });
