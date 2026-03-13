@@ -66,10 +66,10 @@ async function getDocumentContext(latestMessage: string) {
   }
 }
 
-// POST handler with resilience
+// POST handler with final stability fixes
 export async function POST(req: Request) {
   try {
-    // 1. Validate Environment Variables
+    // 1. Environment Validation
     const missingVars = [];
     if (!ASTRA_DB_API_ENDPOINT) missingVars.push("ASTRA_DB_API_ENDPOINT");
     if (!ASTRA_DB_APPLICATION_TOKEN) missingVars.push("ASTRA_DB_APPLICATION_TOKEN");
@@ -101,21 +101,17 @@ export async function POST(req: Request) {
       } catch (rlError) {
         console.error("Rate Limiter Error (falling back to allow):", rlError);
       }
-    } else {
-      console.warn("Rate Limiter disabled: Missing Upstash Configuration.");
     }
 
     // 3. Fetch document context
     const docContext = await getDocumentContext(latestMessage);
 
-    // 4. AI Generation with Fallback
+    // 4. AI Generation
     if (!genAI) {
       return new Response("AI Model not configured. Check GEMINI_API_KEY.", { status: 500 });
     }
 
-    const template = {
-      role: "system",
-      content: `
+    const templateContent = `
 You are an expert AI assistant specialized in the Big 3 anime: One Piece, Naruto, and Bleach.
 You have deep knowledge of all characters, story arcs, abilities, power systems, lore, and world-building.
 Use the context below to answer questions accurately. If the context doesn't cover the topic, answer based on your own knowledge.
@@ -130,45 +126,43 @@ Be enthusiastic, engaging, and reference specific moments when relevant. Don't m
         ---------------------
         QUESTION: ${latestMessage}
         -----------------------
-      `,
-    };
+      `;
 
-    // 4. AI Generation with Fallback (Reverted to gemini-2.5-flash as requested)
-    const generateWithFallback = async (modelName: string) => {
-      // Use generationConfig instead of config for REST-style calls
-      return await genAI.models.generateContentStream({
-        model: `models/${modelName}`, // Ensure 'models/' prefix for REST calls
-        contents: [{ role: "user", parts: [{ text: template.content }] }],
-        generationConfig: {
-          maxOutputTokens: 1000,
-          temperature: 0.7,
-        },
-      });
-    };
+    // Strategy: Try the user's previously working 2.5-flash, then 2.0-flash, then 1.5-flash
+    const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+    let responseStream = null;
+    let lastError = null;
 
-    let responseStream;
-    try {
-      // Try the one that worked before
-      responseStream = await generateWithFallback("gemini-2.5-flash");
-    } catch (err: any) {
-      console.warn(`2.5-flash failed: ${err.message}`);
+    for (const modelName of modelsToTry) {
       try {
-        // Try stable 2.0
-        responseStream = await generateWithFallback("gemini-2.0-flash");
-      } catch (err2: any) {
-        // Final fallback
-        responseStream = await generateWithFallback("gemini-1.5-flash");
+        responseStream = await genAI.models.generateContentStream({
+          model: modelName,
+          contents: [{ role: "user", parts: [{ text: templateContent }] }],
+          config: {
+            maxOutputTokens: 1000,
+            temperature: 0.7,
+          },
+        });
+        if (responseStream) break;
+      } catch (err: any) {
+        console.warn(`${modelName} failed: ${err.message}`);
+        lastError = err;
       }
+    }
+
+    if (!responseStream) {
+      throw lastError || new Error("Failed to initialize any AI model.");
     }
 
     let responseText = "";
     for await (const chunk of responseStream) {
-      responseText += chunk.text || (chunk as any).text?.() || "";
+      // Access .text property directly (it's a getter, no parentheses)
+      responseText += chunk.text || (chunk as any).text || "";
     }
 
-    return new Response(responseText || "Sorry, I couldn't generate a response.", { status: 200 });
+    return new Response(responseText || "I have no response to that.", { status: 200 });
   } catch (error) {
-    console.error("Detailed POST Error:", error);
+    console.error("Final Stability POST Error:", error);
     return new Response(
       `Error generating info: ${error instanceof Error ? error.message : "Internal Server Error"}`,
       { status: 500 }
